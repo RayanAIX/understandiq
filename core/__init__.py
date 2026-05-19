@@ -1,1 +1,1 @@
-# Core modules for UnderstandIQ
+# UnderstandIQ Core Package

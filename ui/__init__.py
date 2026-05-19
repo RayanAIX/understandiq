@@ -1,1 +1,1 @@
-# UI modules for UnderstandIQ
+# UnderstandIQ UI Package

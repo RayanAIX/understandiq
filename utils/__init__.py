@@ -1,1 +1,1 @@
-# Utility modules for UnderstandIQ
+# UnderstandIQ Utils Package

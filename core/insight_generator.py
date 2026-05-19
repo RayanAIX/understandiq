@@ -1,249 +1,158 @@
-"""Insight generator using rule-based logic and OpenRouter API."""
-
-import json
-import os
-from openai import OpenAI
-from typing import List, Dict
-from .scoring_engine import analyze_topic_performance, analyze_difficulty_performance
-
-
-INSIGHT_GENERATION_PROMPT = """You are a cognitive assessment expert. Based on these results, generate 3-4 precise,
-honest insights about this learner's understanding. Be specific to their data.
-Do not be generic. Reference their actual performance patterns.
-
-Results data:
-{results_json}
-
-Return only a JSON array of insight strings. Example:
-["insight 1", "insight 2", "insight 3"]
+"""
+UnderstandIQ Insight Generator
+Generates human-readable insights and recommendations from assessment results.
+Pure rule-based logic — fast, reliable, no extra API call.
 """
 
+from collections import defaultdict
 
-def generate_insights(questions: List[Dict], accuracy: float, calibration: float,
-                     understandiq_score: float) -> List[str]:
-    """
-    Generate natural language insights based on assessment results.
 
-    Uses rule-based logic first, then enhances with Gemini if available.
-
-    Args:
-        questions: List of question dicts with answers
-        accuracy: Accuracy score
-        calibration: Calibration score
-        understandiq_score: Composite score
-
-    Returns:
-        List of insight strings
-    """
+def generate_insights(answers: list, accuracy: float, calibration: float, uiq_score: float) -> list:
     insights = []
 
-    topic_perf = analyze_topic_performance(questions)
-    difficulty_perf = analyze_difficulty_performance(questions)
+    if not answers:
+        return ["No answers recorded — please complete the assessment."]
 
-    overconfident_topics = []
-    underconfident_topics = []
-    accurate_topics = []
+    total = len(answers)
+    correct = sum(1 for a in answers if a["is_correct"])
+    overconfident = [a for a in answers if a.get("calibration_status") == "Overconfident"]
+    underconfident = [a for a in answers if a.get("calibration_status") == "Underconfident"]
+    well_calibrated = [a for a in answers if a.get("calibration_status") == "Well-calibrated"]
 
-    for topic, data in topic_perf.items():
-        if data['avg_confidence'] > 3.5 and data['accuracy'] < 60:
-            overconfident_topics.append(topic)
-        elif data['avg_confidence'] < 2.5 and data['accuracy'] > 70:
-            underconfident_topics.append(topic)
-        elif data['accuracy'] >= 80:
-            accurate_topics.append(topic)
-
-    if accuracy >= 85 and calibration >= 80:
+    # Insight 1: Overall calibration narrative
+    if calibration >= 80:
         insights.append(
-            "Your accuracy and calibration are both strong — you know the material and you know what you know. This metacognitive precision is rare and indicates deep understanding."
+            f"Your confidence and accuracy are tightly aligned — you correctly identified what you knew "
+            f"and what you didn't. This metacognitive awareness is genuinely rare and predicts strong long-term retention."
         )
-    elif accuracy >= 70 and calibration < 50:
-        gap = accuracy - calibration
+    elif len(overconfident) > len(answers) * 0.4:
+        topics = list(set(a["topic_tag"] for a in overconfident))
+        topic_str = ", ".join(topics[:3])
         insights.append(
-            f"You scored {accuracy}% accuracy but your confidence was calibrated to around {calibration}%. That {gap}% gap is the 'Illusion of Understanding' — you performed reasonably but overestimated your knowledge."
+            f"Overconfidence detected in {len(overconfident)} of {total} questions — particularly around: {topic_str}. "
+            f"You answered incorrectly while feeling certain. This 'Knowledge Illusion' is the most common "
+            f"cause of exam failure and learning stagnation."
         )
-    elif accuracy < 50 and calibration > 70:
+    elif len(underconfident) > len(answers) * 0.3:
         insights.append(
-            "You showed strong awareness of what you don't know — your confidence accurately reflected lower performance. This metacognitive honesty is actually a good foundation for learning."
-        )
-    elif accuracy < 50 and calibration < 50:
-        insights.append(
-            "Both accuracy and calibration are low — you're uncertain about material you also don't know well. This is a foundational gap zone; building core knowledge should be your priority."
+            f"You underestimated yourself on {len(underconfident)} correct answers. "
+            f"Your knowledge is stronger than your confidence suggests — this often reflects test anxiety "
+            f"or imposter syndrome rather than an actual knowledge gap."
         )
 
-    if overconfident_topics:
-        topics_str = ", ".join(overconfident_topics)
+    # Insight 2: Topic-level analysis
+    topic_accuracy = defaultdict(lambda: {"correct": 0, "total": 0})
+    for a in answers:
+        tag = a.get("topic_tag", "General")
+        topic_accuracy[tag]["total"] += 1
+        if a["is_correct"]:
+            topic_accuracy[tag]["correct"] += 1
+
+    weak_topics = [(t, d) for t, d in topic_accuracy.items() if d["total"] > 1 and d["correct"] / d["total"] < 0.5]
+    strong_topics = [(t, d) for t, d in topic_accuracy.items() if d["total"] > 1 and d["correct"] / d["total"] >= 0.8]
+
+    if weak_topics:
+        wt_names = ", ".join(t for t, _ in weak_topics[:2])
         insights.append(
-            f"You were most overconfident in questions tagged '{topics_str}' — this is where your surface-level knowledge may be masking conceptual gaps."
+            f"Your accuracy was below 50% in: {wt_names}. "
+            f"These topics are not yet consolidated in memory — focused review here will yield the fastest improvement."
         )
 
-    if 'surface' in difficulty_perf and 'conceptual' in difficulty_perf:
-        surface_acc = difficulty_perf['surface']['accuracy']
-        conceptual_acc = difficulty_perf['conceptual']['accuracy']
+    if strong_topics:
+        st_names = ", ".join(t for t, _ in strong_topics[:2])
+        insights.append(
+            f"Strong performance in: {st_names}. "
+            f"These concepts are well-understood. You can safely move to applying them in new contexts."
+        )
 
-        if surface_acc >= 80 and conceptual_acc < 60:
+    # Insight 3: Difficulty pattern
+    by_difficulty = defaultdict(lambda: {"correct": 0, "total": 0})
+    for a in answers:
+        diff = a.get("difficulty", "surface")
+        by_difficulty[diff]["total"] += 1
+        if a["is_correct"]:
+            by_difficulty[diff]["correct"] += 1
+
+    surface_acc = _pct(by_difficulty["surface"])
+    conceptual_acc = _pct(by_difficulty["conceptual"])
+    applied_acc = _pct(by_difficulty["applied"])
+
+    if by_difficulty["surface"]["total"] > 0 and by_difficulty["conceptual"]["total"] > 0:
+        if surface_acc >= 70 and conceptual_acc < 50:
             insights.append(
-                f"Your accuracy on surface questions was {surface_acc}%, but dropped to {conceptual_acc}% on conceptual questions. You recall well but struggle with deeper understanding."
+                f"You recall facts well ({surface_acc:.0f}% on surface questions) but struggle with "
+                f"conceptual reasoning ({conceptual_acc:.0f}% on conceptual questions). "
+                f"This is the classic gap between memorization and genuine understanding."
             )
-        elif conceptual_acc >= surface_acc + 20:
+        elif conceptual_acc >= 70:
             insights.append(
-                "You perform better on conceptual questions than surface recall — you prefer understanding over memorizing. Consider building more factual anchors to support your reasoning."
+                f"Strong conceptual reasoning detected ({conceptual_acc:.0f}% accuracy on deeper questions). "
+                f"Your understanding goes beyond surface recall — a strong signal of durable learning."
             )
 
-    if 'applied' in difficulty_perf:
-        applied_acc = difficulty_perf['applied']['accuracy']
-        if applied_acc < 50:
-            insights.append(
-                f"Applied questions (only {applied_acc}% accuracy) reveal difficulty transferring knowledge to new contexts. Practice with real-world scenarios would help bridge this gap."
-            )
-        elif applied_acc >= 80:
-            insights.append(
-                "Strong performance on applied questions shows you can transfer knowledge to new situations — this is a hallmark of genuine understanding versus rote memorization."
-            )
-
-    overconfident_count = sum(
-        1 for q in questions
-        if q.get('confidence_rating', 3) >= 4 and not q.get('is_correct', False)
-    )
-    underconfident_count = sum(
-        1 for q in questions
-        if q.get('confidence_rating', 3) <= 2 and q.get('is_correct', False)
-    )
-
-    if overconfident_count > len(questions) * 0.3:
+    # Insight 4: Confidence trend
+    avg_conf = sum(a["confidence_rating"] for a in answers) / total
+    if avg_conf >= 4.0 and accuracy < 60:
         insights.append(
-            f"You showed overconfidence in {overconfident_count} questions — answering incorrectly while feeling certain. Be wary of these 'knowledge illusions'."
+            f"Your average confidence was {avg_conf:.1f}/5 — but your accuracy was only {accuracy:.0f}%. "
+            f"This high-confidence, low-accuracy pattern is the strongest predictor of future learning problems. "
+            f"Treating this material as familiar when it isn't prevents deeper encoding."
         )
-    if underconfident_count > len(questions) * 0.3:
+    elif avg_conf <= 2.5 and accuracy >= 65:
         insights.append(
-            f"You underconfident in {underconfident_count} questions — answering correctly while doubting yourself. Trust your preparation more."
+            f"You scored {accuracy:.0f}% while averaging only {avg_conf:.1f}/5 in confidence. "
+            f"You know more than you think. Building awareness of your own competence is the next step."
         )
 
-    if len(insights) < 3:
-        try:
-            enhanced_insights = enhance_insights_with_gemini(
-                questions, accuracy, calibration, understandiq_score
-            )
-            if enhanced_insights:
-                insights = insights[:2] + enhanced_insights[:3-len(insights)]
-        except Exception:
-            pass
-
-    return insights[:5]
+    return insights[:5] if insights else ["Assessment complete. Review the question breakdown for detailed feedback."]
 
 
-def enhance_insights_with_gemini(questions: List[Dict], accuracy: float,
-                                   calibration: float, score: float) -> List[str]:
-    """Use OpenRouter to generate additional insights."""
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        return []
+def generate_recommendations(answers: list, accuracy: float, calibration: float, insights: list) -> list:
+    recs = []
 
-    client = OpenAI(
-        api_key=api_key,
-        base_url="https://api.groq.com/openai/v1"
-    )
-
-    results_data = {
-        'accuracy': accuracy,
-        'calibration': calibration,
-        'understandiq_score': score,
-        'total_questions': len(questions),
-        'topic_performance': analyze_topic_performance(questions),
-        'difficulty_performance': analyze_difficulty_performance(questions)
-    }
-
-    prompt = INSIGHT_GENERATION_PROMPT.format(
-        results_json=json.dumps(results_data, indent=2)
-    )
-
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[
-            {"role": "user", "content": prompt}
-        ],
-        response_format={"type": "json_object"}
-    )
-
-    try:
-        text = response.choices[0].message.content.strip()
-        if text.startswith('```json'):
-            text = text[7:]
-        if text.startswith('```'):
-            text = text[3:]
-        if text.endswith('```'):
-            text = text[:-3]
-
-        insights = json.loads(text.strip())
-        return [str(i) for i in insights if isinstance(i, str)]
-    except Exception:
-        return []
-
-
-def generate_recommendations(questions: List[Dict], accuracy: float,
-                               calibration: float, insights: List[str]) -> List[str]:
-    """
-    Generate actionable recommendations based on results.
-
-    Args:
-        questions: List of question dicts
-        accuracy: Accuracy score
-        calibration: Calibration score
-        insights: Generated insights
-
-    Returns:
-        List of recommendation strings
-    """
-    recommendations = []
-    topic_perf = analyze_topic_performance(questions)
-
-    overconfident_topics = [
-        topic for topic, data in topic_perf.items()
-        if data['avg_confidence'] > 3.5 and data['accuracy'] < 60
-    ]
-
-    if overconfident_topics:
-        recommendations.append(
-            f"Re-read the sections on {', '.join(overconfident_topics)} and try to explain "
-            "each concept to someone without looking at notes. Teaching reveals gaps."
-        )
-
-    if calibration < 50:
-        recommendations.append(
-            "Before answering, pause 3 seconds to genuinely assess your certainty. "
-            "This practice builds metacognitive awareness over time."
-        )
-
-    if accuracy >= 80 and calibration >= 70:
-        recommendations.append(
-            "Move to applied exercises and case studies — your understanding foundation "
-            "is solid, now test transfer to new contexts."
-        )
+    overconfident = [a for a in answers if a.get("calibration_status") == "Overconfident"]
+    underconfident = [a for a in answers if a.get("calibration_status") == "Underconfident"]
 
     if accuracy < 50:
-        recommendations.append(
-            "Start with core definitions and key concepts before testing again. "
-            "Build factual anchors before attempting conceptual integration."
+        recs.append(
+            "Return to the source material and read actively — highlight key concepts and write one-sentence "
+            "summaries for each section before testing again."
+        )
+    elif accuracy < 70:
+        recs.append(
+            "You have a partial grasp of this material. Focus your review on the incorrectly answered questions "
+            "specifically — don't re-read everything, target the gaps."
+        )
+    else:
+        recs.append(
+            "Your accuracy is solid. The next level is application — try using these concepts to solve a novel "
+            "problem or explain the material to someone else without notes."
         )
 
-    if 'applied' in [q.get('difficulty') for q in questions]:
-        applied_correct = sum(
-            1 for q in questions
-            if q.get('difficulty') == 'applied' and q.get('is_correct', False)
-        )
-        if applied_correct < len([q for q in questions if q.get('difficulty') == 'applied']) * 0.5:
-            recommendations.append(
-                "Practice applying concepts through real-world examples or problems. "
-                "Application bridges abstract knowledge to practical understanding."
-            )
-
-    weak_topics = [
-        topic for topic, data in topic_perf.items()
-        if data['accuracy'] < 60
-    ]
-    if weak_topics:
-        recommendations.append(
-            f"Focus study time on {', '.join(weak_topics)} — these topics show the most "
-            "knowledge gaps and should be prioritized in review."
+    if len(overconfident) >= 2:
+        topics = list(set(a["topic_tag"] for a in overconfident))
+        recs.append(
+            f"For topics where you were overconfident ({', '.join(topics[:3])}): practice the 'explain it from scratch' "
+            f"technique. If you can't explain a concept without the source material, you don't yet understand it."
         )
 
-    return recommendations[:3]
+    if len(underconfident) >= 2:
+        recs.append(
+            "Your calibration shows underconfidence — you know more than you feel you do. "
+            "Practice low-stakes retrieval: write down everything you remember about each topic before checking. "
+            "This builds accurate self-assessment over time."
+        )
+
+    if calibration < 60:
+        recs.append(
+            "Before your next study session, try predicting your score before you start. "
+            "This metacognitive habit trains your brain to monitor its own understanding in real time."
+        )
+
+    return recs[:3]
+
+
+def _pct(d: dict) -> float:
+    if d["total"] == 0:
+        return 0.0
+    return (d["correct"] / d["total"]) * 100
