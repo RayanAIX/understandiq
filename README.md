@@ -31,15 +31,16 @@ That second question — the metacognitive one — reveals something the first o
 
 ## What UnderstandIQ Does
 
-Upload any learning material — a research paper, lecture notes, a textbook chapter, an article. UnderstandIQ generates assessment questions at surface, conceptual, and applied depth levels.
+Upload any learning material — a research paper, lecture notes, a textbook chapter, an article. UnderstandIQ generates four types of questions at surface, conceptual, and applied depth levels.
 
-For each question, you answer **and** rate your confidence *before* seeing the result.
+For each question, you answer, capture your reasoning, and rate your confidence — all *before* seeing the result.
 
 The system then reveals:
 
-- **Accuracy Score** — What percentage you got right
-- **Calibration Score** — How well your confidence matched your actual performance  
-- **UnderstandIQ Score** — The composite metric: you need both to score high
+- **Accuracy Score** — What percentage you got right (with partial credit for open-ended answers)
+- **Calibration Score** — How well your confidence matched your actual performance
+- **UnderstandIQ Score** — The composite metric: you need both knowledge and self-awareness to score high
+- **Cognitive Archetype** — A psychologically grounded profile of how you think and learn
 
 The result isn't a grade. It's a **cognitive fingerprint** — a precise map of where your understanding is solid, where it's brittle, and where confidence is masking a gap.
 
@@ -66,12 +67,44 @@ UnderstandIQ operationalizes three validated cognitive science constructs:
 | Feature | Description |
 |--------|-------------|
 | 📄 Document Upload | PDF, DOCX, or raw text paste |
-| 🧠 AI Question Generation | Surface, conceptual, and applied depth via Groq LLaMA |
-| 📊 Confidence Capture | Per-question rating before results are shown |
-| 🎯 Calibration Analysis | Gap chart visualizing confidence vs. correctness per question |
-| 💡 Insight Engine | Rule-based cognitive pattern detection |
-| 📋 PDF Report | Full downloadable assessment report |
+| 🧠 Four Question Types | MCQ, Short Answer, Application, and Explain-It — each probing a different cognitive layer |
+| ✍️ Reasoning Capture | Students explain their thinking per question, enabling pattern analysis beyond scores |
+| 📊 Confidence Calibration | Per-question confidence rating before results are shown |
+| 🎯 Calibration Gap Chart | Visualises where confidence diverges from actual performance |
+| 🔬 AI Cognitive Analysis | LLM-powered archetype detection, misconception identification, and deep insight generation |
+| 🏷️ Cognitive Archetypes | Named learning profiles: Calibrated Thinker, Knowledge Illusion Risk, Reflective Analyst, and more |
+| 📋 PDF Report | Full downloadable cognitive assessment report, generated in-memory |
 | ⬇ Zero Setup | Deployed and live — no installation needed |
+
+---
+
+## Four Question Types
+
+Most assessment tools only ask MCQs. UnderstandIQ uses four types because each reveals something different about how a person thinks:
+
+| Type | What It Tests | Why It Matters |
+|------|--------------|----------------|
+| **MCQ** | Recall speed and recognition | Fast signal on factual knowledge |
+| **Short Answer** | Articulation of understanding | Can you say it in your own words? |
+| **Application** | Transfer thinking | Does knowledge survive a new context? |
+| **Explain-It** | Depth of understanding | True understanding enables simplification |
+
+Open-ended answers receive partial credit based on conceptual overlap with the model answer, surfacing degrees of understanding rather than binary pass/fail.
+
+---
+
+## Cognitive Archetypes
+
+After completing the assessment, UnderstandIQ generates a personalised cognitive archetype — a psychologically grounded profile based on your accuracy, calibration, reasoning patterns, and topic-level performance.
+
+| Archetype | Pattern |
+|-----------|---------|
+| **Calibrated Thinker** | High accuracy, well-calibrated confidence |
+| **Confident Executor** | Strong performance, confidence slightly ahead of knowledge |
+| **Reflective Analyst** | Knows what they don't know — underconfident despite solid answers |
+| **Surface Memorizer** | Strong recall, weaker conceptual depth |
+| **Knowledge Illusion Risk** | High confidence despite significant gaps |
+| **Intuitive Guesser** | Performs better than their reasoning suggests |
 
 ---
 
@@ -106,39 +139,34 @@ Get a free Groq API key at [console.groq.com](https://console.groq.com) — gene
 
 ```
 understandiq/
-├── app.py                      # Main Streamlit application
-├── core/
-│   ├── document_parser.py      # PDF, DOCX, text extraction
-│   ├── question_generator.py   # Groq API question generation + JSON validation
-│   ├── scoring_engine.py       # Calibration math and UnderstandIQ scoring
-│   └── insight_generator.py    # Rule-based cognitive pattern insights
-├── ui/
-│   ├── styles.py               # Dark research-lab CSS theme
-│   └── components.py           # Reusable UI components
+├── app.py              # Complete application — all logic in one file
 ├── requirements.txt
-└── .env.example
+├── .env.example
+└── README.md
 ```
+
+The entire system — document parsing, question generation, scoring engine, cognitive analysis, PDF export, and UI — lives in `app.py`. This makes deployment, forking, and auditing straightforward.
 
 ---
 
 ## Use Cases
 
-**EdTech Platforms** — Add calibration scoring to any existing quiz system to surface metacognitive data.
+**EdTech Platforms** — Add calibration scoring to any existing quiz system to surface metacognitive data that raw scores miss.
 
-**Independent Learners** — Audit your own understanding before exams or presentations.
+**Independent Learners** — Audit your own understanding before exams or presentations. Know exactly where confidence is outrunning knowledge.
 
-**Tutors and Educators** — Identify students who are overconfident in weak areas before it becomes a problem.
+**Tutors and Educators** — Identify students who are overconfident in weak areas before it becomes a problem on a real exam.
 
-**Cognitive Science Research** — Collect confidence-accuracy data at scale for metacognition studies.
+**Cognitive Science Research** — Collect confidence-accuracy and reasoning data at scale for metacognition studies.
 
-**AI Assessment Systems** — Use as a reference implementation for calibration-aware evaluation.
+**AI Assessment Systems** — Use as a reference implementation for calibration-aware, multi-type evaluation.
 
 ---
 
 ## Technical Stack
 
 - **Frontend:** Streamlit (Python)
-- **AI:** Groq API (LLaMA 3.3 70B) for question generation
+- **AI:** Groq API (LLaMA 3.3 70B) — question generation and cognitive analysis
 - **Document Parsing:** pdfplumber, python-docx
 - **Visualization:** Plotly (dark theme)
 - **PDF Export:** fpdf2 (in-memory, no disk write)
@@ -152,8 +180,11 @@ understandiq/
 # Convert confidence (1-5 scale) to percentage
 conf_pct = ((confidence - 1) / 4) * 100
 
+# Performance percentage (1.0 for correct, partial credit for open-ended)
+perf_pct = credit * 100
+
 # Calibration gap per question
-gap = abs(conf_pct - (100 if correct else 0))
+gap = abs(conf_pct - perf_pct)
 
 # Calibration score
 calibration = 100 - mean(all gaps)
@@ -162,8 +193,8 @@ calibration = 100 - mean(all gaps)
 understandiq = (accuracy * 0.5) + (calibration * 0.5)
 ```
 
-Overconfidence detected when: `confidence ≥ 4` AND `incorrect`  
-Underconfidence detected when: `confidence ≤ 2` AND `correct`
+Overconfidence flagged when: `confidence ≥ 4` AND `performance < 40%`  
+Underconfidence flagged when: `confidence ≤ 2` AND `performance > 60%`
 
 ---
 
