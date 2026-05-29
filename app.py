@@ -883,7 +883,7 @@ def show_upload():
             if wc < 50:
                 err("Please provide at least 50 words for a meaningful assessment.")
             else:
-                with st.spinner("Reading your document and generating cognitive assessment…"):
+                with st.spinner("Analyzing document and preparing cognitive assessment…"):
                     try:
                         qs = generate_questions(text, nq, depth)
                         if not qs:
